@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { useCallStore } from "../store/useCallStore";
-import { useChatStore } from "../store/useChatStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { socket, connectSocket } from "../socket";
 
@@ -18,14 +17,14 @@ const useWebRTC = () => {
   const { authUser } = useAuthStore();
   const peerConnectionRef = useRef(null);
 
+  // Connect socket when authUser is present
   useEffect(() => {
     if (authUser?._id) {
       connectSocket(authUser._id);
     }
   }, [authUser]);
 
-
-
+  // Initiate a call (from caller side)
   const initiateCall = async (userId, callType = "video") => {
     if (!socket || !userId) return;
 
@@ -37,7 +36,7 @@ const useWebRTC = () => {
     setPeerConnection(pc);
 
     pc.ontrack = (event) => {
-      console.log('Caller received remote stream:', event.streams[0]);
+      console.log("Caller received remote stream:", event.streams[0]);
       setRemoteStream(event.streams[0]);
     };
 
@@ -51,16 +50,17 @@ const useWebRTC = () => {
     };
 
     pc.onconnectionstatechange = () => {
-      console.log('Connection state:', pc.connectionState);
-      if (pc.connectionState === 'connected') {
+      console.log("Connection state:", pc.connectionState);
+      if (pc.connectionState === "connected") {
         setCallActive(true);
       }
     };
 
     try {
-      const constraints = callType === "audio" 
-        ? { audio: true, video: false } 
-        : { audio: true, video: true };
+      const constraints =
+        callType === "audio"
+          ? { audio: true, video: false }
+          : { audio: true, video: true };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -74,52 +74,61 @@ const useWebRTC = () => {
         offer,
         callType,
       });
-      
+
       setCallType(callType);
     } catch (err) {
       console.error("Error initiating call:", err);
     }
   };
 
+  // Handle incoming socket events
   useEffect(() => {
     if (!socket) return;
 
+    // Incoming call from another user
     socket.on("incoming-call", ({ from, offer, callType }) => {
       setIncomingCall({ from, offer, callType });
     });
 
-    socket.on("call-accepted", async ({ from, answer }) => {
+    // Callee accepted the call
+    socket.on("answer-call", async ({ from, answer }) => {
       const pc = peerConnectionRef.current;
       if (!pc) return;
-      
+
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         setCallActive(true);
-        console.log('Call connected successfully');
+        console.log("Call connected");
       } catch (error) {
-        console.error('Error setting remote description:', error);
+        console.error("Error setting remote description:", error);
       }
     });
 
-    socket.on("ice-candidate", async ({ from, candidate }) => {
+    // Handle incoming ICE candidates
+    socket.on("ice-candidate", async ({ candidate }) => {
       const pc = peerConnectionRef.current;
       if (!pc || !candidate) return;
-      
+
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (error) {
-        console.error('Error adding ICE candidate:', error);
+        console.error("Error adding ICE candidate:", error);
       }
     });
 
+    // When the other user ends the call
     socket.on("call-ended", () => {
+      const pc = peerConnectionRef.current;
+      if (pc) {
+        pc.close();
+        peerConnectionRef.current = null;
+      }
       resetCall();
-      peerConnectionRef.current = null;
     });
 
     return () => {
       socket.off("incoming-call");
-      socket.off("call-accepted");
+      socket.off("answer-call");
       socket.off("ice-candidate");
       socket.off("call-ended");
     };

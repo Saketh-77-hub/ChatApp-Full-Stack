@@ -1,24 +1,29 @@
-// src/socket.js
 import { io } from "socket.io-client";
 
-const BASE_URL = import.meta.env.MODE === "development" ? "http://localhost:5001" : window.location.origin;
+let socket = null;
 
-export const socket = io(BASE_URL, {
-  autoConnect: false,
-  reconnection: true,
-  reconnectionAttempts: 5,
-  reconnectionDelay: 1000,
-});
-
+/**
+ * Connect to Socket.IO server with the given userId
+ * and store the socket instance.
+ */
 export const connectSocket = (userId) => {
-  if (userId && !socket.connected) {
-    socket.io.opts.query = { userId };
-    socket.connect();
-  }
+  if (!userId) return;
+
+  socket = io("http://localhost:5001", {
+    query: { userId },
+    transports: ["websocket"], // optional, to avoid long polling fallback
+  });
+
+  socket.on("connect", () => {
+    console.log("✅ Socket connected:", socket.id);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ Socket disconnected");
+  });
 };
 
-export const disconnectSocket = () => {
-  if (socket.connected) {
-    socket.disconnect();
-  }
-};
+/**
+ * Get the current connected socket instance.
+ */
+export { socket };
