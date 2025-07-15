@@ -1,3 +1,4 @@
+// Core and third-party packages
 import express from "express";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
@@ -5,11 +6,12 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 
+// Local modules (with .js extensions)
 import { connectDB } from "./lib/db.js";
 import { app, server } from "./lib/socket.js";
-
 import authRoutes from "./routes/auth.route.js";
 import messageRoutes from "./routes/message.route.js";
+
 
 // Load environment variables
 dotenv.config();

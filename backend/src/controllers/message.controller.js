@@ -3,6 +3,7 @@ import Message from "../models/message.model.js";
 import { getReceiverSocketId, io } from "../lib/socket.js";
 import { v2 as cloudinary } from "cloudinary";
 
+
 /**
  * Get users for sidebar (excluding the logged-in user)
  */
