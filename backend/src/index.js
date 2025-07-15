@@ -41,7 +41,7 @@ app.use("/api/messages", messageRoutes);
 // Static Files (Production)
 // =====================
 if (process.env.NODE_ENV === "production") {
-  const clientPath = path.join(__dirname, "../frontend/dist");
+  const clientPath = path.join(__dirname, "../../frontend/dist");
   app.use(express.static(clientPath));
 
   app.get("*", (req, res) => {
