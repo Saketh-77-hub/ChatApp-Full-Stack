@@ -1,64 +1,96 @@
 import { useRef, useState } from "react";
 import { useChatStore } from "../store/useChatStore";
-import { Image, Send, X } from "lucide-react";
+import { Image, Send, X, Mic, Video } from "lucide-react";
 import toast from "react-hot-toast";
 
 const MessageInput = () => {
   const [text, setText] = useState("");
-  const [imagePreview, setImagePreview] = useState(null);
-  const fileInputRef = useRef(null);
+  const [preview, setPreview] = useState(null); // for image/audio/video preview
+  const [fileType, setFileType] = useState(""); // image, audio, video
+  const imageInputRef = useRef(null);
+  const audioInputRef = useRef(null);
+  const videoInputRef = useRef(null);
+
   const { sendMessage } = useChatStore();
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setImagePreview(reader.result);
-    };
-    reader.readAsDataURL(file);
+  const convertToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = (err) => reject(err);
+    });
   };
 
-  const removeImage = () => {
-    setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+  const handleFileChange = async (e, type) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const base64 = await convertToBase64(file);
+    setPreview(base64);
+    setFileType(type);
+  };
+
+  const removePreview = () => {
+    setPreview(null);
+    setFileType("");
+    imageInputRef.current.value = "";
+    audioInputRef.current.value = "";
+    videoInputRef.current.value = "";
   };
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!text.trim() && !imagePreview) return;
+    if (!text.trim() && !preview) return;
 
     try {
-      await sendMessage({
+      const payload = {
         text: text.trim(),
-        image: imagePreview,
-      });
+        contentType: fileType || "text",
+      };
 
-      // Clear form
+      if (fileType === "image") payload.image = preview;
+      if (fileType === "audio") payload.audio = preview;
+      if (fileType === "video") payload.video = preview;
+
+      await sendMessage(payload);
+
+      // Reset
       setText("");
-      setImagePreview(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      removePreview();
     } catch (error) {
       console.error("Failed to send message:", error);
+      toast.error("Message failed to send");
     }
   };
 
   return (
     <div className="p-4 w-full">
-      {imagePreview && (
+      {preview && (
         <div className="mb-3 flex items-center gap-2">
           <div className="relative">
-            <img
-              src={imagePreview}
-              alt="Preview"
-              className="w-20 h-20 object-cover rounded-lg border border-zinc-700"
-            />
+            {fileType === "image" && (
+              <img
+                src={preview}
+                alt="preview"
+                className="w-20 h-20 object-cover rounded-lg border border-zinc-700"
+              />
+            )}
+
+            {fileType === "audio" && (
+              <audio controls className="w-48">
+                <source src={preview} type="audio/mp3" />
+              </audio>
+            )}
+
+            {fileType === "video" && (
+              <video controls className="w-48 h-24 rounded-lg border border-zinc-700">
+                <source src={preview} type="video/mp4" />
+              </video>
+            )}
+
             <button
-              onClick={removeImage}
+              onClick={removePreview}
               className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-base-300
               flex items-center justify-center"
               type="button"
@@ -78,27 +110,42 @@ const MessageInput = () => {
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            ref={fileInputRef}
-            onChange={handleImageChange}
-          />
 
+          {/* Hidden Inputs */}
+          <input type="file" accept="image/*" ref={imageInputRef} className="hidden" onChange={(e) => handleFileChange(e, "image")} />
+          <input type="file" accept="audio/*" ref={audioInputRef} className="hidden" onChange={(e) => handleFileChange(e, "audio")} />
+          <input type="file" accept="video/*" ref={videoInputRef} className="hidden" onChange={(e) => handleFileChange(e, "video")} />
+
+          {/* File Buttons */}
           <button
             type="button"
-            className={`hidden sm:flex btn btn-circle
-                     ${imagePreview ? "text-emerald-500" : "text-zinc-400"}`}
-            onClick={() => fileInputRef.current?.click()}
+            className={`btn btn-circle text-zinc-400`}
+            onClick={() => imageInputRef.current?.click()}
           >
             <Image size={20} />
           </button>
+
+          <button
+            type="button"
+            className="btn btn-circle text-zinc-400"
+            onClick={() => audioInputRef.current?.click()}
+          >
+            <Mic size={20} />
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-circle text-zinc-400"
+            onClick={() => videoInputRef.current?.click()}
+          >
+            <Video size={20} />
+          </button>
         </div>
+
         <button
           type="submit"
           className="btn btn-sm btn-circle"
-          disabled={!text.trim() && !imagePreview}
+          disabled={!text.trim() && !preview}
         >
           <Send size={22} />
         </button>
@@ -106,4 +153,5 @@ const MessageInput = () => {
     </div>
   );
 };
+
 export default MessageInput;

@@ -1,8 +1,7 @@
 import User from "../models/user.model.js";
 import Message from "../models/message.model.js";
 import { getReceiverSocketId, io } from "../lib/socket.js";
-import { v2 as cloudinary } from "cloudinary";
-
+import cloudinary from "../lib/cloudinary.js";
 
 /**
  * Get users for sidebar (excluding the logged-in user)
@@ -31,7 +30,7 @@ export const getMessages = async (req, res) => {
         { senderId: myId, receiverId: userToChatId },
         { senderId: userToChatId, receiverId: myId },
       ],
-    }).sort({ createdAt: 1 }); // Optional: sorts messages by timestamp
+    }).sort({ createdAt: 1 });
 
     res.status(200).json(messages);
   } catch (error) {
@@ -41,24 +40,50 @@ export const getMessages = async (req, res) => {
 };
 
 /**
- * Send a new message (text/image) from logged-in user to receiver
+ * Send a new message (text/image/audio/video) from logged-in user to receiver
  */
 export const sendMessage = async (req, res) => {
   try {
-    const { text, image } = req.body;
+    const { text, image, audio, video, contentType } = req.body;
     const { id: receiverId } = req.params;
-    const senderId = req.user._id;
+    const senderId = req.user?._id || req.body.senderId;
 
-    let imageUrl = "";
+    if (!senderId || !receiverId) {
+      return res.status(400).json({ message: "Missing sender or receiver ID" });
+    }
 
+    console.log("📩 Incoming message:");
+    console.log("Sender ID:", senderId);
+    console.log("Receiver ID:", receiverId);
+    console.log("Text:", text);
+    if (image) console.log("Image preview:", image.slice(0, 100));
+    if (audio) console.log("Audio preview:", audio.slice(0, 100));
+    if (video) console.log("Video preview:", video.slice(0, 100));
+
+    let imageUrl = "", audioUrl = "", videoUrl = "";
+
+    // Upload image
     if (image) {
-      try {
-        const uploadResponse = await cloudinary.uploader.upload(image);
-        imageUrl = uploadResponse.secure_url;
-      } catch (cloudErr) {
-        console.error("❌ Cloudinary upload failed:", cloudErr.message);
-        return res.status(500).json({ message: "Image upload failed" });
-      }
+      const uploadRes = await cloudinary.uploader.upload(image, {
+        resource_type: "image",
+      });
+      imageUrl = uploadRes.secure_url;
+    }
+
+    // Upload audio
+    if (audio) {
+      const uploadRes = await cloudinary.uploader.upload(audio, {
+        resource_type: "video", // Cloudinary treats audio as video
+      });
+      audioUrl = uploadRes.secure_url;
+    }
+
+    // Upload video
+    if (video) {
+      const uploadRes = await cloudinary.uploader.upload(video, {
+        resource_type: "video",
+      });
+      videoUrl = uploadRes.secure_url;
     }
 
     const newMessage = new Message({
@@ -66,23 +91,20 @@ export const sendMessage = async (req, res) => {
       receiverId,
       text,
       image: imageUrl,
+      audio: audioUrl,
+      video: videoUrl,
+      contentType: contentType || "text",
     });
 
     await newMessage.save();
 
-    // Emit to receiver if online
-    const receiverSocketId = getReceiverSocketId(receiverId);
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit("newMessage", newMessage);
-    }
-
-    // Emit to sender (to update their UI instantly)
-    const senderSocketId = getReceiverSocketId(senderId);
-    if (senderSocketId) {
-      io.to(senderSocketId).emit("newMessage", newMessage);
-    }
+    [receiverId, senderId].forEach(id => {
+      const socketId = getReceiverSocketId(id);
+      if (socketId) io.to(socketId).emit("newMessage", newMessage);
+    });
 
     res.status(200).json(newMessage);
+
   } catch (error) {
     console.error("❌ Error in sendMessage:", error.message);
     res.status(500).json({ message: "Internal server error" });
