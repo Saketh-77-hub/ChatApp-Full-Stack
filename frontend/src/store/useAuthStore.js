@@ -5,6 +5,7 @@ import { io } from "socket.io-client";
 
 const BASE_URL = import.meta.env.MODE === "development" ? "http://localhost:5001" : "/";
 
+
 export const useAuthStore = create((set, get) => ({
   authUser: null,
   isSigningUp: false,
@@ -63,6 +64,7 @@ export const useAuthStore = create((set, get) => ({
       set({ authUser: null });
       toast.success("Logged out successfully");
       get().disconnectSocket();
+      window.location.href = "/login";
     } catch (error) {
       toast.error(error.response.data.message);
     }
