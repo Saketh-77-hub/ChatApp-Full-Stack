@@ -1,53 +1,12 @@
 import { X, Phone, Video } from "lucide-react";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
-import { useCallStore } from "../store/useCallStore";
-import { socket } from "../socket";
+import useWebRTC from "../hooks/useWebRTC";
 
 const ChatHeader = () => {
   const { selectedUser, setSelectedUser } = useChatStore();
   const { onlineUsers } = useAuthStore();
-  const { setPeerConnection, setLocalStream } = useCallStore();
-
-  const initiateCall = async (type = "video") => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: type === "video",
-        audio: true,
-      });
-
-      const pc = new RTCPeerConnection();
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
-      setLocalStream(stream);
-      setPeerConnection(pc);
-
-      pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit("ice-candidate", {
-            to: selectedUser._id,
-            candidate: e.candidate,
-          });
-        }
-      };
-
-      pc.ontrack = (event) => {
-        const [remoteStream] = event.streams;
-        useCallStore.getState().setRemoteStream(remoteStream);
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      socket.emit("call-user", {
-        to: selectedUser._id,
-        offer,
-      });
-    } catch (error) {
-      alert("Failed to access mic/camera. Please allow permissions.");
-      console.error("Error starting call:", error);
-    }
-  };
+  const { initiateCall } = useWebRTC();
 
   return (
     <div className="p-2.5 border-b border-base-300">
@@ -56,7 +15,10 @@ const ChatHeader = () => {
         <div className="flex items-center gap-3">
           <div className="avatar">
             <div className="size-10 rounded-full relative">
-              <img src={selectedUser.profilePic || "/avatar.png"} alt={selectedUser.fullName} />
+              <img
+                src={selectedUser.profilePic || "/avatar.png"}
+                alt={selectedUser.fullName}
+              />
             </div>
           </div>
           <div>
@@ -69,10 +31,10 @@ const ChatHeader = () => {
 
         {/* Right: Buttons */}
         <div className="flex items-center gap-2">
-          <button className="btn btn-sm btn-outline" onClick={() => initiateCall("audio")}>
+          <button className="btn btn-sm btn-outline" onClick={() => initiateCall(selectedUser._id, "audio")}>
             <Phone size={18} />
           </button>
-          <button className="btn btn-sm btn-outline" onClick={() => initiateCall("video")}>
+          <button className="btn btn-sm btn-outline" onClick={() => initiateCall(selectedUser._id, "video")}>
             <Video size={18} />
           </button>
           <button onClick={() => setSelectedUser(null)}>

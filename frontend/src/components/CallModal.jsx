@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useCallStore } from "../store/useCallStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
-import { socket } from "../socket"; // ✅ Socket instance from shared file
+import { socket } from "../socket";
 
 const CallModal = () => {
   const {
@@ -10,10 +10,12 @@ const CallModal = () => {
     localStream,
     remoteStream,
     peerConnection,
+    callType,
     setIncomingCall,
     setLocalStream,
     setRemoteStream,
     setPeerConnection,
+    setCallActive,
     resetCall,
   } = useCallStore();
 
@@ -22,59 +24,69 @@ const CallModal = () => {
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const localAudioRef = useRef(null);
+  const remoteAudioRef = useRef(null);
 
-  // ✅ Ensure authUser exists before proceeding
   if (!authUser || !authUser._id) return null;
 
   useEffect(() => {
     if (localStream && localVideoRef.current) {
       localVideoRef.current.srcObject = localStream;
     }
+    if (localStream && localAudioRef.current) {
+      localAudioRef.current.srcObject = localStream;
+    }
   }, [localStream]);
 
   useEffect(() => {
-    if (remoteStream && remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStream;
+    console.log('Remote stream updated:', remoteStream);
+    if (remoteStream) {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.play().catch((err) =>
+          console.error("Auto-play error:", err)
+        );
+      }
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remoteStream;
+        remoteAudioRef.current.play().catch((err) =>
+          console.error("Audio auto-play error:", err)
+        );
+      }
     }
   }, [remoteStream]);
 
-  const endCall = () => {
-    if (peerConnection) peerConnection.close();
-    if (localStream) localStream.getTracks().forEach((t) => t.stop());
+  useEffect(() => {
+    const handleICECandidate = async ({ candidate }) => {
+      if (candidate && peerConnection) {
+        try {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.error("Failed to add ICE candidate:", err);
+        }
+      }
+    };
 
+    socket.on("ice-candidate", handleICECandidate);
+    return () => socket.off("ice-candidate", handleICECandidate);
+  }, [peerConnection]);
+
+  const endCall = () => {
     const targetUserId = incomingCall?.from || selectedUser?._id;
-    if (targetUserId) {
+    if (targetUserId && socket.connected) {
       socket.emit("end-call", { to: targetUserId });
     }
-
     resetCall();
   };
 
   const acceptCall = async () => {
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
 
-    pc.ontrack = (event) => {
-      const [stream] = event.streams;
-      setRemoteStream(stream);
-    };
-
-    const constraints = incomingCall.callType === 'audio' 
-      ? { audio: true, video: false }
-      : { audio: true, video: true };
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-    setLocalStream(stream);
-    setPeerConnection(pc);
-
-    await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    socket.emit("answer-call", {
-      to: incomingCall.from,
-      answer,
+    pc.addEventListener("track", (event) => {
+      console.log(`Callee received remote ${incomingCall.callType} stream:`, event.streams[0]);
+      setRemoteStream(event.streams[0]);
     });
 
     pc.onicecandidate = (event) => {
@@ -86,7 +98,31 @@ const CallModal = () => {
       }
     };
 
-    setIncomingCall(null);
+    const constraints =
+      incomingCall.callType === "audio"
+        ? { audio: true, video: false }
+        : { audio: true, video: true };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      setLocalStream(stream);
+      setPeerConnection(pc);
+
+      await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      socket.emit("answer-call", {
+        to: incomingCall.from,
+        answer,
+      });
+
+      setCallActive(true);
+      setIncomingCall(null);
+    } catch (error) {
+      console.error("Error in acceptCall:", error);
+    }
   };
 
   if (!incomingCall && !peerConnection) return null;
@@ -101,17 +137,31 @@ const CallModal = () => {
         </h2>
 
         <div className="flex justify-center gap-4">
-          <video
-            ref={localVideoRef}
-            autoPlay
-            muted
-            className="w-32 h-32 bg-black rounded-lg object-cover"
-          />
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            className="w-32 h-32 bg-black rounded-lg object-cover"
-          />
+          {(incomingCall?.callType || callType) !== "audio" ? (
+            <>
+              <video
+                ref={localVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-32 h-32 bg-black rounded-lg object-cover"
+              />
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                className="w-32 h-32 bg-black rounded-lg object-cover"
+                onLoadedMetadata={() => console.log('Remote video metadata loaded')}
+                onCanPlay={() => console.log('Remote video can play')}
+              />
+            </>
+          ) : (
+            <div className="flex items-center justify-center w-64 h-32 bg-gray-800 rounded-lg">
+              <span className="text-white text-lg">🎵 Audio Call</span>
+            </div>
+          )}
+          <audio ref={localAudioRef} autoPlay muted className="hidden" />
+          <audio ref={remoteAudioRef} autoPlay volume={1} className="hidden" />
         </div>
 
         <div className="flex justify-center gap-4 pt-2">
