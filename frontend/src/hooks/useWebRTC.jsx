@@ -94,7 +94,8 @@ const useWebRTC = () => {
       
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        console.log('Remote description set successfully');
+        setCallActive(true);
+        console.log('Call connected successfully');
       } catch (error) {
         console.error('Error setting remote description:', error);
       }

@@ -87,6 +87,7 @@ const CallModal = () => {
     pc.addEventListener("track", (event) => {
       console.log(`Callee received remote ${incomingCall.callType} stream:`, event.streams[0]);
       setRemoteStream(event.streams[0]);
+      setCallActive(true);
     });
 
     pc.onicecandidate = (event) => {
