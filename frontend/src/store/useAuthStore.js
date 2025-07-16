@@ -94,22 +94,16 @@ export const useAuthStore = create((set, get) => ({
     
     connectSocket(authUser._id);
     
-    // Set up online users listener
-    const setupListener = () => {
-      if (socket?.connected) {
-        socket.off("getOnlineUsers"); // Remove existing listener
-        socket.on("getOnlineUsers", (userIds) => {
-          console.log("Received online users:", userIds);
-          const filteredUsers = userIds.filter(id => id !== authUser._id);
-          console.log("Filtered online users:", filteredUsers);
-          set({ onlineUsers: filteredUsers });
-        });
-      } else {
-        setTimeout(setupListener, 500);
-      }
-    };
-    
-    setupListener();
+    // Set up online users listener immediately
+    if (socket) {
+      socket.off("getOnlineUsers");
+      socket.on("getOnlineUsers", (userIds) => {
+        console.log("Received online users:", userIds);
+        const filteredUsers = userIds.filter(id => id !== authUser._id);
+        console.log("Filtered online users:", filteredUsers);
+        set({ onlineUsers: filteredUsers });
+      });
+    }
   },
   disconnectSocket: () => {
     if (socket?.connected) socket.disconnect();
