@@ -111,23 +111,7 @@ const useWebRTC = () => {
     
     // Check if socket is connected
     if (!socket.connected) {
-      console.log("Socket not connected, checking server status...");
-      
-      // Try to check if server is available
-      try {
-        const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
-        const response = await fetch(`${backendUrl}/api/status`, { method: 'GET' })
-          .catch(() => null);
-          
-        if (!response) {
-          alert("Server appears to be offline. Please start the backend server.");
-          return;
-        }
-      } catch (err) {
-        console.error("Server status check failed:", err);
-        alert("Cannot connect to the server. Please make sure the backend is running.");
-        return;
-      }
+      console.log("Socket not connected, will attempt call anyway");
     }
 
     const pc = createPeerConnection();
