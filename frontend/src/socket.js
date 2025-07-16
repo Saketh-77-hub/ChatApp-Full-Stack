@@ -5,7 +5,7 @@ let socket = null;
 export const connectSocket = (userId) => {
   if (!userId) return;
 
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || "https://chatapp-full-stack-3-i5hv.onrender.com";
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:5002";
   console.log("Socket connecting to:", backendUrl);
   console.log("Connecting to:", backendUrl);
   

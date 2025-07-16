@@ -3,7 +3,7 @@ import { axiosInstance } from "../lib/axios.js";
 import toast from "react-hot-toast";
 import { socket, connectSocket } from "../socket";
 
-const BASE_URL = import.meta.env.MODE === "development" ? "http://localhost:5002" : "/";
+const BASE_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5002";
 
 
 export const useAuthStore = create((set, get) => ({
@@ -37,7 +37,9 @@ export const useAuthStore = create((set, get) => ({
       toast.success("Account created successfully");
       get().connectSocket();
     } catch (error) {
-      toast.error(error.response.data.message);
+      console.error("Signup error:", error);
+      const message = error.response?.data?.message || "Signup failed";
+      toast.error(message);
     } finally {
       set({ isSigningUp: false });
     }
@@ -52,7 +54,9 @@ export const useAuthStore = create((set, get) => ({
 
       get().connectSocket();
     } catch (error) {
-      toast.error(error.response.data.message);
+      console.error("Login error:", error);
+      const message = error.response?.data?.message || "Login failed";
+      toast.error(message);
     } finally {
       set({ isLoggingIn: false });
     }
