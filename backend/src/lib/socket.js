@@ -48,6 +48,7 @@ io.on("connection", (socket) => {
 
   // 📞 Caller initiates call
   socket.on("call-user", ({ to, offer, callType }) => {
+    console.log(`📞 Call attempt from ${userId} to ${to}`);
     const targetSocketId = getReceiverSocketId(to);
     if (targetSocketId) {
       io.to(targetSocketId).emit("incoming-call", {
@@ -56,13 +57,17 @@ io.on("connection", (socket) => {
         callType,
       });
       console.log(`📞 Sent incoming-call to ${targetSocketId}`);
+      // Confirm call was sent
+      socket.emit("call-sent", { to, status: "sent" });
     } else {
       console.log(`⚠️ User ${to} not found or offline`);
+      socket.emit("call-failed", { to, reason: "User offline" });
     }
   });
 
   // ✅ Callee sends answer
   socket.on("answer-call", ({ to, answer }) => {
+    console.log(`✅ Answer from ${userId} to ${to}`);
     const targetSocketId = getReceiverSocketId(to);
     if (targetSocketId) {
       io.to(targetSocketId).emit("answer-call", {
@@ -70,6 +75,8 @@ io.on("connection", (socket) => {
         answer,
       });
       console.log(`✅ Sent answer-call to ${targetSocketId}`);
+    } else {
+      console.log(`⚠️ Cannot send answer - user ${to} not found`);
     }
   });
 
@@ -81,6 +88,9 @@ io.on("connection", (socket) => {
         from: userId,
         candidate,
       });
+      console.log(`❄️ ICE candidate sent from ${userId} to ${to}`);
+    } else {
+      console.log(`⚠️ Cannot send ICE candidate - user ${to} not found`);
     }
   });
 

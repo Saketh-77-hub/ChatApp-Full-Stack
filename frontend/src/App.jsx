@@ -26,14 +26,7 @@ const App = () => {
     checkAuth();
   }, [checkAuth]);
 
-  useEffect(() => {
-  const { authUser } = useAuthStore.getState();
 
-  if (authUser?._id) {
-    socket.io.opts.query = { userId: authUser._id };
-    socket.connect();
-  }
-}, []);
 
 
 

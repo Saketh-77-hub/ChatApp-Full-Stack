@@ -50,7 +50,21 @@ const CallModal = () => {
 
   const acceptCall = async () => {
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+      ],
+      iceCandidatePoolSize: 10,
     });
 
     pc.ontrack = (event) => {
@@ -65,6 +79,18 @@ const CallModal = () => {
           candidate: event.candidate,
         });
       }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log("Callee connection state:", pc.connectionState);
+      if (pc.connectionState === "failed") {
+        console.error("Call connection failed");
+        resetCall();
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("Callee ICE connection state:", pc.iceConnectionState);
     };
 
     const constraints = incomingCall.callType === "audio"

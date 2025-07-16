@@ -29,7 +29,22 @@ const useWebRTC = () => {
     if (!socket || !userId) return;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+      ],
+      iceCandidatePoolSize: 10,
     });
 
     peerConnectionRef.current = pc;
@@ -53,6 +68,21 @@ const useWebRTC = () => {
       console.log("Connection state:", pc.connectionState);
       if (pc.connectionState === "connected") {
         setCallActive(true);
+      } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+        console.error("Call connection failed or disconnected");
+        resetCall();
+      }
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log("ICE gathering state:", pc.iceGatheringState);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("ICE connection state:", pc.iceConnectionState);
+      if (pc.iceConnectionState === "failed") {
+        console.error("ICE connection failed - restarting ICE");
+        pc.restartIce();
       }
     };
 
@@ -76,6 +106,14 @@ const useWebRTC = () => {
       });
 
       setCallType(callType);
+      
+      // Set timeout for call attempt
+      setTimeout(() => {
+        if (pc.connectionState !== "connected") {
+          console.log("Call timeout - no response");
+          resetCall();
+        }
+      }, 30000); // 30 second timeout
     } catch (err) {
       console.error("Error initiating call:", err);
     }

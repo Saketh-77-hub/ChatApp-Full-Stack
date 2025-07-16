@@ -17,7 +17,21 @@ export const startCall = async (callType = "video") => {
   if (!authUser || !selectedUser) return;
 
   const pc = new RTCPeerConnection({
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      {
+        urls: "turn:openrelay.metered.ca:80",
+        username: "openrelayproject",
+        credential: "openrelayproject",
+      },
+      {
+        urls: "turn:openrelay.metered.ca:443",
+        username: "openrelayproject",
+        credential: "openrelayproject",
+      },
+    ],
+    iceCandidatePoolSize: 10,
   });
 
   // Handle local ICE candidates
@@ -34,6 +48,19 @@ export const startCall = async (callType = "video") => {
   pc.ontrack = (event) => {
     console.log(`Caller received remote ${callType} stream:`, event.streams[0]);
     setRemoteStream(event.streams[0]);
+  };
+
+  pc.onconnectionstatechange = () => {
+    console.log("Connection state:", pc.connectionState);
+    if (pc.connectionState === "connected") {
+      setCallActive(true);
+    } else if (pc.connectionState === "failed") {
+      console.error("Call connection failed");
+    }
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log("ICE connection state:", pc.iceConnectionState);
   };
 
   try {

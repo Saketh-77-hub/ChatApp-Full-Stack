@@ -9,9 +9,13 @@ let socket = null;
 export const connectSocket = (userId) => {
   if (!userId) return;
 
-  socket = io("http://localhost:5001", {
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
+  
+  socket = io(backendUrl, {
     query: { userId },
-    transports: ["websocket"], // optional, to avoid long polling fallback
+    transports: ["websocket", "polling"], // Allow fallback for better connectivity
+    timeout: 20000,
+    forceNew: true,
   });
 
   socket.on("connect", () => {
