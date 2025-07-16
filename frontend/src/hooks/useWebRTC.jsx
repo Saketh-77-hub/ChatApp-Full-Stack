@@ -21,18 +21,37 @@ const useWebRTC = () => {
   // Connect socket when authUser is present
   useEffect(() => {
     let socketCheckInterval;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 3;
     
     if (authUser?._id) {
       // Initial connection
-      connectSocket(authUser._id);
+      try {
+        connectSocket(authUser._id);
+      } catch (err) {
+        console.error("Initial socket connection failed:", err);
+      }
       
       // Set up periodic check to ensure socket stays connected
       socketCheckInterval = setInterval(() => {
         if (!socket || !socket.connected) {
-          console.log("Socket connection check: reconnecting...");
-          connectSocket(authUser._id);
+          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            console.log(`Socket connection check: reconnecting... (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
+            try {
+              connectSocket(authUser._id);
+              reconnectAttempts++;
+            } catch (err) {
+              console.error("Socket reconnection failed:", err);
+            }
+          } else if (reconnectAttempts === MAX_RECONNECT_ATTEMPTS) {
+            console.warn("Maximum socket reconnection attempts reached. WebRTC features may not work.");
+            reconnectAttempts++; // Increment to avoid showing this message again
+          }
+        } else {
+          // Reset counter on successful connection
+          reconnectAttempts = 0;
         }
-      }, 5000); // Check every 5 seconds
+      }, 10000); // Check every 10 seconds instead of 5
     }
     
     return () => {
@@ -73,30 +92,42 @@ const useWebRTC = () => {
       return;
     }
     
-    // Ensure socket is connected before proceeding
+    // Check if socket is available
     if (!socket) {
       console.log("Socket not initialized, attempting to connect");
       if (authUser?._id) {
-        connectSocket(authUser._id);
+        try {
+          connectSocket(authUser._id);
+        } catch (err) {
+          console.error("Failed to connect socket:", err);
+          alert("Cannot establish connection to the server. Please check if the server is running.");
+          return;
+        }
       } else {
         console.error("Cannot connect socket: no authenticated user");
         return;
       }
     }
     
+    // Check if socket is connected
     if (!socket.connected) {
-      console.log("Socket not connected, waiting for connection...");
-      // Wait for socket to connect before proceeding
-      await new Promise((resolve) => {
-        const checkConnection = () => {
-          if (socket && socket.connected) {
-            resolve();
-          } else {
-            setTimeout(checkConnection, 500);
-          }
-        };
-        checkConnection();
-      });
+      console.log("Socket not connected, checking server status...");
+      
+      // Try to check if server is available
+      try {
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:5001";
+        const response = await fetch(`${backendUrl}/api/status`, { method: 'GET' })
+          .catch(() => null);
+          
+        if (!response) {
+          alert("Server appears to be offline. Please start the backend server.");
+          return;
+        }
+      } catch (err) {
+        console.error("Server status check failed:", err);
+        alert("Cannot connect to the server. Please make sure the backend is running.");
+        return;
+      }
     }
 
     const pc = createPeerConnection();
