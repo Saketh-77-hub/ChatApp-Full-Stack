@@ -20,9 +20,26 @@ const useWebRTC = () => {
 
   // Connect socket when authUser is present
   useEffect(() => {
+    let socketCheckInterval;
+    
     if (authUser?._id) {
+      // Initial connection
       connectSocket(authUser._id);
+      
+      // Set up periodic check to ensure socket stays connected
+      socketCheckInterval = setInterval(() => {
+        if (!socket || !socket.connected) {
+          console.log("Socket connection check: reconnecting...");
+          connectSocket(authUser._id);
+        }
+      }, 5000); // Check every 5 seconds
     }
+    
+    return () => {
+      if (socketCheckInterval) {
+        clearInterval(socketCheckInterval);
+      }
+    };
   }, [authUser]);
 
   // Create RTCPeerConnection with proper configuration
@@ -51,7 +68,36 @@ const useWebRTC = () => {
 
   // Initiate a call (from caller side)
   const initiateCall = async (userId, callType = "video") => {
-    if (!socket || !userId) return;
+    if (!userId) {
+      console.error("Cannot initiate call: missing user ID");
+      return;
+    }
+    
+    // Ensure socket is connected before proceeding
+    if (!socket) {
+      console.log("Socket not initialized, attempting to connect");
+      if (authUser?._id) {
+        connectSocket(authUser._id);
+      } else {
+        console.error("Cannot connect socket: no authenticated user");
+        return;
+      }
+    }
+    
+    if (!socket.connected) {
+      console.log("Socket not connected, waiting for connection...");
+      // Wait for socket to connect before proceeding
+      await new Promise((resolve) => {
+        const checkConnection = () => {
+          if (socket && socket.connected) {
+            resolve();
+          } else {
+            setTimeout(checkConnection, 500);
+          }
+        };
+        checkConnection();
+      });
+    }
 
     const pc = createPeerConnection();
 
