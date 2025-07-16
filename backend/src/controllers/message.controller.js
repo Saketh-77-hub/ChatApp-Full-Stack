@@ -97,11 +97,37 @@ export const sendMessage = async (req, res) => {
     });
 
     await newMessage.save();
+    console.log("✅ Message saved to DB:", newMessage._id);
 
-    [receiverId, senderId].forEach(id => {
-      const socketId = getReceiverSocketId(id);
-      if (socketId) io.to(socketId).emit("newMessage", newMessage);
-    });
+    // Emit to both sender and receiver for real-time updates
+    const messageData = {
+      _id: newMessage._id,
+      senderId: newMessage.senderId,
+      receiverId: newMessage.receiverId,
+      text: newMessage.text,
+      image: newMessage.image,
+      audio: newMessage.audio,
+      video: newMessage.video,
+      contentType: newMessage.contentType,
+      createdAt: newMessage.createdAt,
+      updatedAt: newMessage.updatedAt
+    };
+
+    // Send to receiver
+    const receiverSocketId = getReceiverSocketId(receiverId);
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("newMessage", messageData);
+      console.log("📨 Message sent to receiver:", receiverId);
+    } else {
+      console.log("⚠️ Receiver offline:", receiverId);
+    }
+
+    // Send to sender for confirmation
+    const senderSocketId = getReceiverSocketId(senderId);
+    if (senderSocketId) {
+      io.to(senderSocketId).emit("newMessage", messageData);
+      console.log("📨 Message confirmed to sender:", senderId);
+    }
 
     res.status(200).json(newMessage);
 

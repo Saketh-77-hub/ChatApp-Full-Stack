@@ -36,20 +36,62 @@ io.on("connection", (socket) => {
   const userId = socket.handshake.query.userId;
   console.log("🆔 User ID from query:", userId);
 
-  if (userId && userId !== "undefined") {
+  if (userId && userId !== "undefined" && userId !== "null") {
+    // Remove any existing connection for this user
+    const existingSocketId = userSocketMap[userId];
+    if (existingSocketId && existingSocketId !== socket.id) {
+      console.log(`🔄 Replacing existing connection for user ${userId}`);
+      // Disconnect the old socket if it exists
+      const oldSocket = io.sockets.sockets.get(existingSocketId);
+      if (oldSocket) {
+        oldSocket.disconnect(true);
+      }
+    }
+    
     userSocketMap[userId] = socket.id;
     callState[userId] = "idle";
     console.log("✅ Updated userSocketMap:", userSocketMap);
+    
+    // 🔔 Notify all users who is online (broadcast to everyone)
+    const onlineUsers = Object.keys(userSocketMap);
+    console.log("📢 Broadcasting online users to all clients:", onlineUsers);
+    
+    // Emit to all connected clients
+    io.emit("getOnlineUsers", onlineUsers);
+    
+    // Also send directly to the newly connected user
+    socket.emit("getOnlineUsers", onlineUsers);
+    
+    console.log(`👤 User ${userId} is now online. Total online: ${onlineUsers.length}`);
+  } else {
+    console.log("⚠️ Invalid userId:", userId, "- not adding to userSocketMap");
   }
 
-  // 🔔 Notify all users who is online
-  io.emit("getOnlineUsers", Object.keys(userSocketMap));
+  // Handle request for online users
+  socket.on("getOnlineUsers", () => {
+    const onlineUsers = Object.keys(userSocketMap);
+    console.log("📤 Client", socket.id, "requested online users. Sending:", onlineUsers);
+    socket.emit("getOnlineUsers", onlineUsers);
+  });
+
+  // Debug: Log when client sends any event
+  socket.onAny((event, ...args) => {
+    if (event !== "getOnlineUsers" && event !== "ice-candidate") {
+      console.log(`📡 Event from ${userId} (${socket.id}):`, event, args);
+    }
+  });
 
   // 💬 Handle direct messaging
   socket.on("sendMessage", (messageData) => {
+    console.log("📨 Sending message:", messageData);
     const receiverSocketId = getReceiverSocketId(messageData.receiverId);
     if (receiverSocketId) {
       io.to(receiverSocketId).emit("newMessage", messageData);
+      // Confirm message delivery to sender
+      socket.emit("messageDelivered", { messageId: messageData._id, status: "delivered" });
+    } else {
+      console.log("⚠️ Receiver not online, message will be stored in DB only");
+      socket.emit("messageDelivered", { messageId: messageData._id, status: "offline" });
     }
   });
 
@@ -115,6 +157,18 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ❌ Reject Call
+  socket.on("reject-call", ({ to }) => {
+    callState[userId] = "idle";
+    callState[to] = "idle";
+    const targetSocketId = getReceiverSocketId(to);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("call-rejected", {
+        from: userId,
+      });
+    }
+  });
+
   // ❌ End Call
   socket.on("end-call", ({ to }) => {
     callState[userId] = "idle";
@@ -139,11 +193,29 @@ io.on("connection", (socket) => {
 
   // 🔌 Disconnect cleanup
   socket.on("disconnect", () => {
-    console.log("❌ Disconnected:", socket.id);
+    console.log("❌ User disconnected:", socket.id, "userId:", userId);
+    if (userId && userId !== "undefined" && userId !== "null") {
+      // Only delete if this socket belongs to this user
+      if (userSocketMap[userId] === socket.id) {
+        delete userSocketMap[userId];
+        delete callState[userId];
+        delete iceWarningTimestamps[userId];
+        
+        // Notify all users about updated online status
+        const onlineUsers = Object.keys(userSocketMap);
+        io.emit("getOnlineUsers", onlineUsers);
+        console.log("📊 Updated online users after disconnect:", onlineUsers);
+      } else {
+        console.log("🔄 Socket mismatch, not removing user from map");
+      }
+    }
+  });
+
+  // Handle manual user status updates
+  socket.on("updateUserStatus", ({ status }) => {
     if (userId) {
-      delete userSocketMap[userId];
-      delete callState[userId];
-      io.emit("getOnlineUsers", Object.keys(userSocketMap));
+      console.log(`👤 User ${userId} status updated to: ${status}`);
+      socket.broadcast.emit("userStatusChanged", { userId, status });
     }
   });
 });

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useCallStore } from "../store/useCallStore";
 import { useAuthStore } from "../store/useAuthStore";
-import { socket, connectSocket } from "../socket";
+import { getSocket, isSocketConnected } from "../socket";
 
 const useWebRTC = () => {
   const {
+    incomingCall,
     setIncomingCall,
     setPeerConnection,
     setLocalStream,
@@ -17,49 +18,17 @@ const useWebRTC = () => {
   const { authUser } = useAuthStore();
   const peerConnectionRef = useRef(null);
   const iceCandidatesBuffer = useRef([]);
+  const localStreamRef = useRef(null);
+  const callTimeoutRef = useRef(null);
 
-  // Connect socket when authUser is present
+  // Cleanup on unmount
   useEffect(() => {
-    let socketCheckInterval;
-    let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 3;
-    
-    if (authUser?._id) {
-      // Initial connection
-      try {
-        connectSocket(authUser._id);
-      } catch (err) {
-        console.error("Initial socket connection failed:", err);
-      }
-      
-      // Set up periodic check to ensure socket stays connected
-      socketCheckInterval = setInterval(() => {
-        if (!socket || !socket.connected) {
-          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            console.log(`Socket connection check: reconnecting... (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
-            try {
-              connectSocket(authUser._id);
-              reconnectAttempts++;
-            } catch (err) {
-              console.error("Socket reconnection failed:", err);
-            }
-          } else if (reconnectAttempts === MAX_RECONNECT_ATTEMPTS) {
-            console.warn("Maximum socket reconnection attempts reached. WebRTC features may not work.");
-            reconnectAttempts++; // Increment to avoid showing this message again
-          }
-        } else {
-          // Reset counter on successful connection
-          reconnectAttempts = 0;
-        }
-      }, 10000); // Check every 10 seconds instead of 5
-    }
-    
     return () => {
-      if (socketCheckInterval) {
-        clearInterval(socketCheckInterval);
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
       }
     };
-  }, [authUser]);
+  }, []);
 
   // Create RTCPeerConnection with proper configuration
   const createPeerConnection = useCallback(() => {
@@ -67,14 +36,8 @@ const useWebRTC = () => {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
         {
           urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject",
-        },
-        {
-          urls: "turn:openrelay.metered.ca:443",
           username: "openrelayproject",
           credential: "openrelayproject",
         },
@@ -82,8 +45,45 @@ const useWebRTC = () => {
       iceCandidatePoolSize: 10,
     });
     
+    pc.ontrack = (event) => {
+      console.log("🎥 Received remote stream");
+      setRemoteStream(event.streams[0]);
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && getSocket()?.connected) {
+        const currentCall = incomingCall || { from: null };
+        const targetUserId = currentCall.from || peerConnectionRef.current?.targetUserId;
+        if (targetUserId) {
+          getSocket().emit("ice-candidate", {
+            to: targetUserId,
+            candidate: event.candidate,
+          });
+        }
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log("🔗 Connection state:", pc.connectionState);
+      if (pc.connectionState === "connected") {
+        setCallActive(true);
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+        }
+      } else if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+        resetCall();
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log("❄️ ICE connection state:", pc.iceConnectionState);
+      if (pc.iceConnectionState === "failed") {
+        pc.restartIce();
+      }
+    };
+    
     return pc;
-  }, []);
+  }, [incomingCall, setRemoteStream, setCallActive, resetCall]);
 
   // Initiate a call (from caller side)
   const initiateCall = async (userId, callType = "video") => {
@@ -92,92 +92,32 @@ const useWebRTC = () => {
       return;
     }
     
-    // Check if socket is available
-    if (!socket) {
-      console.log("Socket not initialized, attempting to connect");
-      if (authUser?._id) {
-        try {
-          connectSocket(authUser._id);
-        } catch (err) {
-          console.error("Failed to connect socket:", err);
-          alert("Cannot establish connection to the server. Please check if the server is running.");
-          return;
-        }
-      } else {
-        console.error("Cannot connect socket: no authenticated user");
-        return;
-      }
+    if (!isSocketConnected()) {
+      console.error("Cannot initiate call: socket not connected");
+      alert("Connection lost. Please refresh the page and try again.");
+      return;
     }
-    
-    // Check if socket is connected
-    if (!socket.connected) {
-      console.log("Socket not connected, will attempt call anyway");
-    }
-
-    const pc = createPeerConnection();
-
-    peerConnectionRef.current = pc;
-    setPeerConnection(pc);
-
-    pc.ontrack = (event) => {
-      console.log("Caller received remote stream:", event.streams[0]);
-      setRemoteStream(event.streams[0]);
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        socket.emit("ice-candidate", {
-          to: userId,
-          candidate: event.candidate,
-        });
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log("Connection state:", pc.connectionState);
-      if (pc.connectionState === "connected") {
-        setCallActive(true);
-      } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed") {
-        console.error(`Call connection state changed to: ${pc.connectionState}`);
-        resetCall();
-      }
-    };
-
-    pc.onicegatheringstatechange = () => {
-      console.log("ICE gathering state:", pc.iceGatheringState);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log("ICE connection state:", pc.iceConnectionState);
-      if (pc.iceConnectionState === "failed") {
-        console.error("ICE connection failed - restarting ICE");
-        pc.restartIce();
-      } else if (pc.iceConnectionState === "disconnected") {
-        console.log("ICE connection disconnected - waiting for reconnection");
-        // Give some time for reconnection before giving up
-        setTimeout(() => {
-          if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
-            console.error("ICE reconnection failed after timeout");
-            resetCall();
-          }
-        }, 5000); // 5 second timeout for reconnection
-      }
-    };
 
     try {
-      const constraints =
-        callType === "audio"
-          ? { audio: true, video: false }
-          : { audio: true, video: true };
+      const constraints = callType === "audio" 
+        ? { audio: true, video: false }
+        : { audio: true, video: true };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      localStreamRef.current = stream;
       setLocalStream(stream);
+
+      const pc = createPeerConnection();
+      pc.targetUserId = userId;
+      peerConnectionRef.current = pc;
+      setPeerConnection(pc);
+
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      socket.emit("call-user", {
+      getSocket().emit("call-user", {
         to: userId,
         offer,
         callType,
@@ -185,59 +125,95 @@ const useWebRTC = () => {
 
       setCallType(callType);
       
-      // Set timeout for call attempt
-      setTimeout(() => {
+      // Extended call timeout (5 minutes instead of 30 seconds)
+      callTimeoutRef.current = setTimeout(() => {
         if (pc.connectionState !== "connected") {
-          console.log("Call timeout - no response");
+          console.log("⏰ Call connection timeout after 5 minutes");
           resetCall();
         }
-      }, 30000); // 30 second timeout
+      }, 300000);
     } catch (err) {
-      console.error("Error initiating call:", err);
+      console.error("❌ Error initiating call:", err);
+      resetCall();
     }
   };
 
-  // Handle reconnection of socket
-  useEffect(() => {
-    if (!socket) return;
-    
-    const handleReconnect = () => {
-      console.log("Socket reconnected, checking for active call");
-      // If we have an active call, we might need to renegotiate
-      const pc = peerConnectionRef.current;
-      if (pc && pc.connectionState === "connected") {
-        console.log("Active call detected after reconnection");
+  // Answer incoming call
+  const answerCall = async () => {
+    if (!incomingCall) return;
+
+    try {
+      const constraints = incomingCall.callType === "audio"
+        ? { audio: true, video: false }
+        : { audio: true, video: true };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+
+      const pc = createPeerConnection();
+      pc.targetUserId = incomingCall.from;
+      peerConnectionRef.current = pc;
+      setPeerConnection(pc);
+
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+      
+      // Process buffered ICE candidates
+      while (iceCandidatesBuffer.current.length > 0) {
+        const candidate = iceCandidatesBuffer.current.shift();
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
       }
-    };
-    
-    socket.on("connect", handleReconnect);
-    
-    return () => {
-      socket.off("connect", handleReconnect);
-    };
-  }, []);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      getSocket().emit("answer-call", {
+        to: incomingCall.from,
+        answer,
+      });
+
+      setCallType(incomingCall.callType);
+      setIncomingCall(null);
+    } catch (err) {
+      console.error("❌ Error answering call:", err);
+      resetCall();
+    }
+  };
+
+  // Reject incoming call
+  const rejectCall = () => {
+    if (incomingCall) {
+      getSocket().emit("reject-call", { to: incomingCall.from });
+      setIncomingCall(null);
+    }
+  };
+
+  // End active call
+  const endCall = () => {
+    const pc = peerConnectionRef.current;
+    if (pc?.targetUserId) {
+      getSocket().emit("end-call", { to: pc.targetUserId });
+    }
+    resetCall();
+  };
 
   // Handle incoming socket events
   useEffect(() => {
-    if (!socket) return;
+    const currentSocket = getSocket();
+    if (!currentSocket) return;
 
-    // Incoming call from another user
-    socket.on("incoming-call", ({ from, offer, callType }) => {
+    const handleIncomingCall = ({ from, offer, callType }) => {
+      console.log("📞 Incoming call from:", from);
       setIncomingCall({ from, offer, callType });
-    });
+    };
 
-    // Callee accepted the call
-    socket.on("answer-call", async ({ from, answer }) => {
+    const handleAnswerCall = async ({ from, answer }) => {
       const pc = peerConnectionRef.current;
-      if (!pc) return;
+      if (!pc || pc.remoteDescription) return;
 
       try {
-        // Check if the remote description is already set
-        if (pc.remoteDescription) {
-          console.log("Remote description already set, ignoring duplicate answer");
-          return;
-        }
-        
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         
         // Process buffered ICE candidates
@@ -246,74 +222,99 @@ const useWebRTC = () => {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         }
         
-        console.log("Answer set and buffered candidates processed");
+        console.log("✅ Answer processed successfully");
       } catch (error) {
-        console.error("Error setting remote description:", error);
+        console.error("❌ Error processing answer:", error);
       }
-    });
+    };
 
-    // Handle incoming ICE candidates
-    socket.on("ice-candidate", async ({ candidate }) => {
+    const handleIceCandidate = async ({ candidate }) => {
       const pc = peerConnectionRef.current;
       if (!pc || !candidate) return;
 
       try {
         if (pc.remoteDescription) {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
-          console.log("ICE candidate added successfully");
         } else {
-          // Store candidate for later processing
           iceCandidatesBuffer.current.push(candidate);
-          console.log("ICE candidate buffered - remote description not yet set");
         }
       } catch (error) {
-        console.error("Error adding ICE candidate:", error);
+        console.error("❌ Error adding ICE candidate:", error);
       }
-    });
+    };
 
-    // When the other user ends the call
-    socket.on("call-ended", () => {
-      console.log("Call ended by remote peer");
-      const pc = peerConnectionRef.current;
-      if (pc) {
-        // Close all tracks before closing the connection
-        pc.getSenders().forEach(sender => {
-          if (sender.track) {
-            sender.track.stop();
-          }
-        });
-        pc.close();
-        peerConnectionRef.current = null;
-      }
+    const handleCallEnded = () => {
+      console.log("📞 Call ended by remote peer");
       resetCall();
-    });
-    
-    // Handle call failures
-    socket.on("call-failed", ({ reason }) => {
-      console.error("Call failed:", reason);
+    };
+
+    const handleCallRejected = () => {
+      console.log("❌ Call rejected");
       resetCall();
-    });
+    };
 
+    const handleCallFailed = ({ reason }) => {
+      console.error("❌ Call failed:", reason);
+      resetCall();
+    };
 
-
-
+    currentSocket.on("incoming-call", handleIncomingCall);
+    currentSocket.on("answer-call", handleAnswerCall);
+    currentSocket.on("ice-candidate", handleIceCandidate);
+    currentSocket.on("call-ended", handleCallEnded);
+    currentSocket.on("call-rejected", handleCallRejected);
+    currentSocket.on("call-failed", handleCallFailed);
 
     return () => {
-      socket.off("incoming-call");
-      socket.off("answer-call");
-      socket.off("ice-candidate");
-      socket.off("call-ended");
+      currentSocket.off("incoming-call", handleIncomingCall);
+      currentSocket.off("answer-call", handleAnswerCall);
+      currentSocket.off("ice-candidate", handleIceCandidate);
+      currentSocket.off("call-ended", handleCallEnded);
+      currentSocket.off("call-rejected", handleCallRejected);
+      currentSocket.off("call-failed", handleCallFailed);
     };
-  }, [setIncomingCall, setPeerConnection, setLocalStream, setRemoteStream, resetCall]);
+  }, [setIncomingCall, resetCall]);
 
-  // Helper function to restart a failed call
-  const restartCall = async (userId, callType) => {
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+    }
+    
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+    
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    
+    iceCandidatesBuffer.current = [];
+  }, []);
+
+  // Override resetCall to include cleanup
+  const resetCallWithCleanup = useCallback(() => {
+    cleanup();
     resetCall();
-    // Small delay to ensure cleanup is complete
-    setTimeout(() => initiateCall(userId, callType), 1000);
-  };
+  }, [cleanup, resetCall]);
+
+  // Update resetCall references
+  useEffect(() => {
+    const originalReset = resetCall;
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
   
-  return { initiateCall, restartCall };
+  return { 
+    initiateCall, 
+    answerCall, 
+    rejectCall, 
+    endCall,
+    resetCall: resetCallWithCleanup
+  };
 };
 
 export default useWebRTC;
