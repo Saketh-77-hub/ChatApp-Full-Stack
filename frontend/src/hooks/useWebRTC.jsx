@@ -310,6 +310,8 @@ const useWebRTC = () => {
       resetCall();
     });
 
+
+
     return () => {
       socket.off("incoming-call");
       socket.off("answer-call");
