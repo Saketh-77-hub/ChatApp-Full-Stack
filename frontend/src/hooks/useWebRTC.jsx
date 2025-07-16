@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { useCallStore } from "../store/useCallStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { socket, connectSocket } from "../socket";
@@ -25,10 +25,8 @@ const useWebRTC = () => {
     }
   }, [authUser]);
 
-  // Initiate a call (from caller side)
-  const initiateCall = async (userId, callType = "video") => {
-    if (!socket || !userId) return;
-
+  // Create RTCPeerConnection with proper configuration
+  const createPeerConnection = useCallback(() => {
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
@@ -47,6 +45,15 @@ const useWebRTC = () => {
       ],
       iceCandidatePoolSize: 10,
     });
+    
+    return pc;
+  }, []);
+
+  // Initiate a call (from caller side)
+  const initiateCall = async (userId, callType = "video") => {
+    if (!socket || !userId) return;
+
+    const pc = createPeerConnection();
 
     peerConnectionRef.current = pc;
     setPeerConnection(pc);
@@ -69,8 +76,8 @@ const useWebRTC = () => {
       console.log("Connection state:", pc.connectionState);
       if (pc.connectionState === "connected") {
         setCallActive(true);
-      } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-        console.error("Call connection failed or disconnected");
+      } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed") {
+        console.error(`Call connection state changed to: ${pc.connectionState}`);
         resetCall();
       }
     };
@@ -84,6 +91,15 @@ const useWebRTC = () => {
       if (pc.iceConnectionState === "failed") {
         console.error("ICE connection failed - restarting ICE");
         pc.restartIce();
+      } else if (pc.iceConnectionState === "disconnected") {
+        console.log("ICE connection disconnected - waiting for reconnection");
+        // Give some time for reconnection before giving up
+        setTimeout(() => {
+          if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+            console.error("ICE reconnection failed after timeout");
+            resetCall();
+          }
+        }, 5000); // 5 second timeout for reconnection
       }
     };
 
@@ -120,6 +136,26 @@ const useWebRTC = () => {
     }
   };
 
+  // Handle reconnection of socket
+  useEffect(() => {
+    if (!socket) return;
+    
+    const handleReconnect = () => {
+      console.log("Socket reconnected, checking for active call");
+      // If we have an active call, we might need to renegotiate
+      const pc = peerConnectionRef.current;
+      if (pc && pc.connectionState === "connected") {
+        console.log("Active call detected after reconnection");
+      }
+    };
+    
+    socket.on("connect", handleReconnect);
+    
+    return () => {
+      socket.off("connect", handleReconnect);
+    };
+  }, []);
+
   // Handle incoming socket events
   useEffect(() => {
     if (!socket) return;
@@ -135,6 +171,12 @@ const useWebRTC = () => {
       if (!pc) return;
 
       try {
+        // Check if the remote description is already set
+        if (pc.remoteDescription) {
+          console.log("Remote description already set, ignoring duplicate answer");
+          return;
+        }
+        
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         
         // Process buffered ICE candidates
@@ -159,8 +201,9 @@ const useWebRTC = () => {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
           console.log("ICE candidate added successfully");
         } else {
+          // Store candidate for later processing
           iceCandidatesBuffer.current.push(candidate);
-          console.log("ICE candidate buffered");
+          console.log("ICE candidate buffered - remote description not yet set");
         }
       } catch (error) {
         console.error("Error adding ICE candidate:", error);
@@ -169,11 +212,24 @@ const useWebRTC = () => {
 
     // When the other user ends the call
     socket.on("call-ended", () => {
+      console.log("Call ended by remote peer");
       const pc = peerConnectionRef.current;
       if (pc) {
+        // Close all tracks before closing the connection
+        pc.getSenders().forEach(sender => {
+          if (sender.track) {
+            sender.track.stop();
+          }
+        });
         pc.close();
         peerConnectionRef.current = null;
       }
+      resetCall();
+    });
+    
+    // Handle call failures
+    socket.on("call-failed", ({ reason }) => {
+      console.error("Call failed:", reason);
       resetCall();
     });
 
@@ -185,7 +241,14 @@ const useWebRTC = () => {
     };
   }, [setIncomingCall, setPeerConnection, setLocalStream, setRemoteStream, resetCall]);
 
-  return { initiateCall };
+  // Helper function to restart a failed call
+  const restartCall = async (userId, callType) => {
+    resetCall();
+    // Small delay to ensure cleanup is complete
+    setTimeout(() => initiateCall(userId, callType), 1000);
+  };
+  
+  return { initiateCall, restartCall };
 };
 
 export default useWebRTC;

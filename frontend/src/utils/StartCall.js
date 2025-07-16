@@ -3,23 +3,13 @@ import { useCallStore } from "../store/useCallStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
 
-export const startCall = async (callType = "video") => {
-  const {
-    setLocalStream,
-    setRemoteStream,
-    setPeerConnection,
-    setCallActive,
-    setCallType,
-  } = useCallStore.getState();
-  const { authUser } = useAuthStore.getState();
-  const { selectedUser } = useChatStore.getState();
-
-  if (!authUser || !selectedUser) return;
-
-  const pc = new RTCPeerConnection({
+// Helper function to create a peer connection with consistent config
+const createPeerConnection = () => {
+  return new RTCPeerConnection({
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
       {
         urls: "turn:openrelay.metered.ca:80",
         username: "openrelayproject",
@@ -33,6 +23,30 @@ export const startCall = async (callType = "video") => {
     ],
     iceCandidatePoolSize: 10,
   });
+};
+
+export const startCall = async (callType = "video") => {
+  const {
+    setLocalStream,
+    setRemoteStream,
+    setPeerConnection,
+    setCallActive,
+    setCallType,
+  } = useCallStore.getState();
+  const { authUser } = useAuthStore.getState();
+  const { selectedUser } = useChatStore.getState();
+
+  if (!authUser || !selectedUser) {
+    console.error("Cannot start call: missing user information");
+    return;
+  }
+  
+  if (!socket || !socket.connected) {
+    console.error("Cannot start call: socket not connected");
+    return;
+  }
+
+  const pc = createPeerConnection();
 
   // Handle local ICE candidates
   pc.onicecandidate = (event) => {
@@ -54,13 +68,32 @@ export const startCall = async (callType = "video") => {
     console.log("Connection state:", pc.connectionState);
     if (pc.connectionState === "connected") {
       setCallActive(true);
-    } else if (pc.connectionState === "failed") {
-      console.error("Call connection failed");
+    } else if (pc.connectionState === "failed" || pc.connectionState === "closed" || pc.connectionState === "disconnected") {
+      console.error(`Call connection state changed to: ${pc.connectionState}`);
+      if (pc.connectionState === "failed") {
+        // Clean up the failed connection
+        const { resetCall } = useCallStore.getState();
+        resetCall();
+      }
     }
   };
 
   pc.oniceconnectionstatechange = () => {
     console.log("ICE connection state:", pc.iceConnectionState);
+    if (pc.iceConnectionState === "failed") {
+      console.error("ICE connection failed - attempting to restart ICE");
+      pc.restartIce();
+    } else if (pc.iceConnectionState === "disconnected") {
+      console.log("ICE connection disconnected - waiting for reconnection");
+      // Give some time for reconnection before giving up
+      setTimeout(() => {
+        if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+          console.error("ICE reconnection failed after timeout");
+          const { resetCall } = useCallStore.getState();
+          resetCall();
+        }
+      }, 5000); // 5 second timeout for reconnection
+    }
   };
 
   try {
@@ -86,16 +119,41 @@ export const startCall = async (callType = "video") => {
       callType,
     });
 
+    // Set up a timeout for call attempt
+    const callTimeout = setTimeout(() => {
+      if (pc.connectionState !== "connected") {
+        console.log("Call timeout - no response");
+        const { resetCall } = useCallStore.getState();
+        resetCall();
+        socket.off("answer-call"); // Clean up the listener
+      }
+    }, 30000); // 30 second timeout
+    
     // Wait for answer
-    socket.on("answer-call", async ({ answer }) => {
+    const handleAnswer = async ({ answer }) => {
       try {
+        clearTimeout(callTimeout); // Clear the timeout since we got an answer
+        
+        if (pc.remoteDescription) {
+          console.log("Remote description already set, ignoring duplicate answer");
+          return;
+        }
+        
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         setCallActive(true);
         console.log(`Caller set remote description for ${callType} call`);
       } catch (err) {
         console.error("Caller failed to set remote description:", err);
       }
-    });
+    };
+    
+    socket.on("answer-call", handleAnswer);
+    
+    // Clean up function to remove event listener
+    return () => {
+      socket.off("answer-call", handleAnswer);
+      clearTimeout(callTimeout);
+    };
   } catch (err) {
     console.error("Error in startCall:", err);
   }

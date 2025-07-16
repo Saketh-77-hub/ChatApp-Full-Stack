@@ -1,5 +1,5 @@
 // ✅ CallModal.jsx
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCallStore } from "../store/useCallStore";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
@@ -26,6 +26,7 @@ const CallModal = () => {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const iceCandidatesBuffer = useRef([]);
+  const [connectionStatus, setConnectionStatus] = useState("");
 
   if (!authUser || !authUser._id) return null;
 
@@ -108,14 +109,32 @@ const CallModal = () => {
 
     pc.onconnectionstatechange = () => {
       console.log("Callee connection state:", pc.connectionState);
-      if (pc.connectionState === "failed") {
-        console.error("Call connection failed");
+      setConnectionStatus(pc.connectionState);
+      
+      if (pc.connectionState === "connected") {
+        setCallActive(true);
+      } else if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+        console.error("Call connection failed or closed");
         resetCall();
       }
     };
 
     pc.oniceconnectionstatechange = () => {
       console.log("Callee ICE connection state:", pc.iceConnectionState);
+      
+      if (pc.iceConnectionState === "failed") {
+        console.error("ICE connection failed - attempting to restart ICE");
+        pc.restartIce();
+      } else if (pc.iceConnectionState === "disconnected") {
+        console.log("ICE connection disconnected - waiting for reconnection");
+        // Give some time for reconnection before giving up
+        setTimeout(() => {
+          if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+            console.error("ICE reconnection failed after timeout");
+            resetCall();
+          }
+        }, 5000); // 5 second timeout for reconnection
+      }
     };
 
     const constraints = incomingCall.callType === "audio"
@@ -158,12 +177,34 @@ const CallModal = () => {
         <h2 className="text-xl font-bold">
           {incomingCall ? "Incoming Call..." : `In Call with ${selectedUser?.fullName}`}
         </h2>
+        {connectionStatus && connectionStatus !== "connected" && (
+          <p className="text-sm text-gray-500 mt-1">
+            {connectionStatus === "connecting" ? "Connecting..." : 
+             connectionStatus === "checking" ? "Establishing connection..." : 
+             connectionStatus === "disconnected" ? "Connection interrupted..." : 
+             connectionStatus === "failed" ? "Connection failed" : 
+             connectionStatus}
+          </p>
+        )}
         <div className="flex justify-center gap-4 py-4">
           {callType !== "audio" && (
             <>
-              <video ref={localVideoRef} autoPlay muted className="w-32 h-32 bg-black rounded-lg" />
-              <video ref={remoteVideoRef} autoPlay className="w-32 h-32 bg-black rounded-lg" />
+              <div className="relative">
+                <video ref={localVideoRef} autoPlay muted className="w-32 h-32 bg-black rounded-lg object-cover" />
+                <span className="absolute bottom-1 left-1 text-xs bg-black bg-opacity-50 text-white px-1 rounded">You</span>
+              </div>
+              <div className="relative">
+                <video ref={remoteVideoRef} autoPlay className="w-32 h-32 bg-black rounded-lg object-cover" />
+                <span className="absolute bottom-1 left-1 text-xs bg-black bg-opacity-50 text-white px-1 rounded">{selectedUser?.fullName}</span>
+              </div>
             </>
+          )}
+          {callType === "audio" && (
+            <div className="w-full py-4 flex justify-center items-center">
+              <div className="w-16 h-16 rounded-full bg-blue-500 flex items-center justify-center">
+                <span className="text-2xl text-white">{selectedUser?.fullName?.[0] || "U"}</span>
+              </div>
+            </div>
           )}
         </div>
         <div className="flex justify-center gap-4">
