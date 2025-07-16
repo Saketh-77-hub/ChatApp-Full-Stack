@@ -31,7 +31,7 @@ app.use(cookieParser());
 app.use(cors({
   origin: process.env.NODE_ENV === "production" 
     ? process.env.CLIENT_URL || "*"
-    : "http://localhost:5173",
+    : true, // Allow all origins in development
   credentials: true,
 }));
 
@@ -66,7 +66,9 @@ if (process.env.NODE_ENV === "production") {
 // =====================
 // Start Server
 // =====================
-server.listen(PORT, async () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ Server is running on port ${PORT}`);
+  console.log(`🌐 Server accessible at http://localhost:${PORT}`);
+  console.log(`🌐 Network access: http://[YOUR_IP]:${PORT}`);
   await connectDB();
 });
