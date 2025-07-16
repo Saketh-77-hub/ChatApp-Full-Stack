@@ -8,6 +8,12 @@ const server = http.createServer(app);
 // 🔁 Track userId <-> socketId
 const userSocketMap = {}; // { userId: socketId }
 
+// Add busy/timeout state tracking
+const callState = {}; // { userId: 'idle' | 'ringing' | 'in-call' | 'busy' }
+
+// Add a map to track last warning time for ICE candidate delivery failures
+const iceWarningTimestamps = {}; // { userId: timestamp }
+
 const io = new Server(server, {
   cors: {
     origin:
@@ -32,6 +38,7 @@ io.on("connection", (socket) => {
 
   if (userId && userId !== "undefined") {
     userSocketMap[userId] = socket.id;
+    callState[userId] = "idle";
     console.log("✅ Updated userSocketMap:", userSocketMap);
   }
 
@@ -48,6 +55,12 @@ io.on("connection", (socket) => {
 
   // 📞 Caller initiates call
   socket.on("call-user", ({ to, offer, callType }) => {
+    if (callState[to] === "in-call" || callState[to] === "ringing") {
+      socket.emit("busy", { to });
+      return;
+    }
+    callState[userId] = "ringing";
+    callState[to] = "ringing";
     console.log(`📞 Call attempt from ${userId} to ${to}`);
     const targetSocketId = getReceiverSocketId(to);
     if (targetSocketId) {
@@ -67,6 +80,8 @@ io.on("connection", (socket) => {
 
   // ✅ Callee sends answer
   socket.on("answer-call", ({ to, answer }) => {
+    callState[userId] = "in-call";
+    callState[to] = "in-call";
     console.log(`✅ Answer from ${userId} to ${to}`);
     const targetSocketId = getReceiverSocketId(to);
     if (targetSocketId) {
@@ -90,12 +105,20 @@ io.on("connection", (socket) => {
       });
       console.log(`❄️ ICE candidate sent from ${userId} to ${to}`);
     } else {
-      console.log(`⚠️ Cannot send ICE candidate - user ${to} not found`);
+      // Suppress repeated warnings for the same user within 10 seconds
+      const now = Date.now();
+      if (!iceWarningTimestamps[to] || now - iceWarningTimestamps[to] > 10000) {
+        console.log(`⚠️ Cannot send ICE candidate - user ${to} not found`);
+        iceWarningTimestamps[to] = now;
+      }
+      socket.emit("call-failed", { to, reason: "User offline" });
     }
   });
 
   // ❌ End Call
   socket.on("end-call", ({ to }) => {
+    callState[userId] = "idle";
+    callState[to] = "idle";
     const targetSocketId = getReceiverSocketId(to);
     if (targetSocketId) {
       io.to(targetSocketId).emit("call-ended", {
@@ -104,14 +127,29 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ⏰ Call timeout
+  socket.on("call-timeout", ({ to }) => {
+    callState[userId] = "idle";
+    callState[to] = "idle";
+    const targetSocketId = getReceiverSocketId(to);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("call-timeout", { from: userId });
+    }
+  });
+
   // 🔌 Disconnect cleanup
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
     if (userId) {
       delete userSocketMap[userId];
+      delete callState[userId];
       io.emit("getOnlineUsers", Object.keys(userSocketMap));
     }
   });
 });
+
+// For production: Use Redis adapter for multi-instance scaling
+// import { createAdapter } from '@socket.io/redis-adapter';
+// io.adapter(createAdapter(redisClient, pubClient));
 
 export { io, app, server };
