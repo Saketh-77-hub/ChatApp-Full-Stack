@@ -14,7 +14,7 @@ const useWebRTC = () => {
     resetCall,
   } = useCallStore();
 
-  const { authUser, setOnlineUsers } = useAuthStore();
+  const { authUser } = useAuthStore();
   const peerConnectionRef = useRef(null);
   const iceCandidatesBuffer = useRef([]);
 
@@ -294,10 +294,7 @@ const useWebRTC = () => {
       resetCall();
     });
 
-    // Handle online users updates
-    socket.on("getOnlineUsers", (userIds) => {
-      setOnlineUsers(userIds);
-    });
+
 
 
 
@@ -306,7 +303,6 @@ const useWebRTC = () => {
       socket.off("answer-call");
       socket.off("ice-candidate");
       socket.off("call-ended");
-      socket.off("getOnlineUsers");
     };
   }, [setIncomingCall, setPeerConnection, setLocalStream, setRemoteStream, resetCall]);
 
