@@ -16,6 +16,7 @@ const useWebRTC = () => {
 
   const { authUser } = useAuthStore();
   const peerConnectionRef = useRef(null);
+  const iceCandidatesBuffer = useRef([]);
 
   // Connect socket when authUser is present
   useEffect(() => {
@@ -135,8 +136,14 @@ const useWebRTC = () => {
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        setCallActive(true);
-        console.log("Call connected");
+        
+        // Process buffered ICE candidates
+        while (iceCandidatesBuffer.current.length > 0) {
+          const candidate = iceCandidatesBuffer.current.shift();
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+        
+        console.log("Answer set and buffered candidates processed");
       } catch (error) {
         console.error("Error setting remote description:", error);
       }
@@ -148,7 +155,13 @@ const useWebRTC = () => {
       if (!pc || !candidate) return;
 
       try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log("ICE candidate added successfully");
+        } else {
+          iceCandidatesBuffer.current.push(candidate);
+          console.log("ICE candidate buffered");
+        }
       } catch (error) {
         console.error("Error adding ICE candidate:", error);
       }

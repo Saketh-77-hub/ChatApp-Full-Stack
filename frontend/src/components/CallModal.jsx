@@ -25,8 +25,33 @@ const CallModal = () => {
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const iceCandidatesBuffer = useRef([]);
 
   if (!authUser || !authUser._id) return null;
+
+  // Handle ICE candidates for incoming calls
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on("ice-candidate", async ({ candidate }) => {
+      const pc = peerConnection;
+      if (!pc || !candidate) return;
+
+      try {
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } else {
+          iceCandidatesBuffer.current.push(candidate);
+        }
+      } catch (error) {
+        console.error("Error handling ICE candidate in CallModal:", error);
+      }
+    });
+
+    return () => {
+      socket.off("ice-candidate");
+    };
+  }, [peerConnection]);
 
   useEffect(() => {
     if (localStream && localVideoRef.current) {
@@ -104,6 +129,13 @@ const CallModal = () => {
       setPeerConnection(pc);
 
       await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+      
+      // Process any buffered ICE candidates
+      while (iceCandidatesBuffer.current.length > 0) {
+        const candidate = iceCandidatesBuffer.current.shift();
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+      
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
