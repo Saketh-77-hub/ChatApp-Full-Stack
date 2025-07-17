@@ -33,15 +33,16 @@ const useWebRTC = () => {
   // Create RTCPeerConnection with proper configuration
   const createPeerConnection = useCallback(() => {
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        {
-          urls: "relay1.expressturn.com:3480",
-          username: "000000002068088639",
-          credential: "tZFvADs97vS+Qyeq6MpnUszi+3U=",
-        },
-      ],
+iceServers: [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  {
+    urls: "turn:relay1.expressturn.com:3480",
+    username: "000000002068088639",
+    credential: "tZFvADs97vS+Qyeq6MpnUszi+3U=",
+  },
+],
+
       iceCandidatePoolSize: 10,
     });
     
