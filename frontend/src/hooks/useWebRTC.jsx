@@ -37,9 +37,9 @@ const useWebRTC = () => {
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
         {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject",
+          urls: "relay1.expressturn.com:3480",
+          username: "000000002068088639",
+          credential: "tZFvADs97vS+Qyeq6MpnUszi+3U=",
         },
       ],
       iceCandidatePoolSize: 10,
